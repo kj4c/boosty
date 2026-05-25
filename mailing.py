@@ -13,8 +13,8 @@ VERIFY_MARKER = "verify my account"
 
 BOOST_SIGNUP_URL = "https://vibe.boostjuice.com.au/vibe/signup"
 BOOST_SIGNUP_PAGE = "https://vibe.boostjuice.com.au/vibe/signup"
-SIGNUP_SUBMIT_ACTION_ID = "609cd20e2fc84649f66325d456b4de8139eb1df779"
-SIGNUP_SUCCESS_ACTION_ID = "4063fd9670cbacd4006074d418cb150821da387245"
+SIGNUP_SUBMIT_ACTION_ID = "60ede005c6e5709ed86de3269ea823482d535b055f"
+SIGNUP_SUCCESS_ACTION_ID = "4054d26797aa5dc290824d2fecfcb802e03cb5306d"
 BOOST_PASSWORD = "Abcde1234!"
 
 FIRST_NAMES = [
@@ -232,7 +232,8 @@ def run_boost_signup(session, email, boost_password, name, mobile, dob):
     response1 = boost_signup_step1(session, email, boost_password, name, mobile, dob)
 
     if response1.status_code != 200:
-        return False, "signup request failed"
+        detail = (response1.text or "").strip()[:120]
+        return False, f"signup request failed (HTTP {response1.status_code}: {detail})"
 
     token = get_session_token(session)
     if token:
