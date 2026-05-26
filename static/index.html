@@ -64,6 +64,23 @@
     }
     .btn-outline:hover { border-color: var(--navy); background: #f5f7fa; }
     .actions-stack { display: flex; flex-direction: column; gap: 0; }
+    .link-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+    a.app-link {
+      display: block;
+      text-align: center;
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      background: var(--orange);
+      color: #fff;
+      font-weight: 600;
+      text-decoration: none;
+      font-size: clamp(0.9rem, 2.5vw, 1rem);
+    }
     .hidden { display: none !important; }
 
     .copy-list {
@@ -252,8 +269,7 @@
       <div id="step-login" class="hidden">
         <div class="copy-list" id="creds"></div>
         <ol class="steps">
-          <li>Log in at <a href="https://vibe.boostjuice.com.au/vibe/login" target="_blank" rel="noopener">Boost Vibe</a> with the email and password above.</li>
-          <li>Open the verification email and tap the link.</li>
+          <li>Log in to the Boost app with the email and password above (<a href="https://www.boostjuice.com.au/app/?target=login" target="_blank" rel="noopener noreferrer">open app</a>).</li>
           <li>Come back here and tap the button below.</li>
         </ol>
         <button type="button" class="action btn-secondary" id="btn-watch">I’ve logged in — check for code</button>
@@ -264,6 +280,7 @@
         <div class="status waiting" id="status-text">
           <span class="spinner"></span> Waiting…
         </div>
+        <div class="link-actions hidden" id="wait-link-actions"></div>
         <div class="actions-stack">
           <button type="button" class="action btn-outline" id="btn-cancel-watch">Cancel</button>
         </div>
@@ -302,6 +319,7 @@
   <script>
     const WATCH_TIMEOUT_MS = 120000;
     const POLL_INTERVAL_MS = 3000;
+    const BOOST_APP_LOGIN_URL = "https://www.boostjuice.com.au/app/?target=login";
 
     let sessionId = null;
     let pollTimer = null;
@@ -340,6 +358,7 @@
 
     async function resetToStart() {
       stopPolling();
+      clearWaitLinkActions();
       await endSessionOnServer();
       if (sessionId) {
         try {
@@ -403,6 +422,21 @@
       valBtn.addEventListener("click", copy);
       copyBtn.addEventListener("click", copy);
       return row;
+    }
+
+    function openBoostAppLink(label = "Open Boost app") {
+      return `<a class="app-link" href="${BOOST_APP_LOGIN_URL}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
+    }
+
+    function renderWaitLinkActions() {
+      const box = $("wait-link-actions");
+      box.innerHTML = openBoostAppLink();
+      show(box);
+    }
+
+    function clearWaitLinkActions() {
+      $("wait-link-actions").innerHTML = "";
+      hide($("wait-link-actions"));
     }
 
     function renderCreds(container, data) {
@@ -477,6 +511,8 @@
       if (!sessionId) return;
       $("btn-watch").disabled = true;
       showOnly("step-wait");
+      clearWaitLinkActions();
+      renderWaitLinkActions();
 
       if (accountData) {
         renderCreds($("creds-wait"), accountData);
@@ -541,6 +577,14 @@
 
         let msg = data.message || "Checking inbox…";
         $("status-text").innerHTML = `<span class="spinner"></span> ${escapeHtml(msg)}`;
+
+        if (
+          data.status === "verify_email" ||
+          data.status === "waiting_code" ||
+          data.status === "waiting_verify"
+        ) {
+          renderWaitLinkActions();
+        }
       } catch (e) {
         $("status-text").textContent = e.message;
       }
