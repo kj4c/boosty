@@ -15,7 +15,13 @@ BOOST_SIGNUP_URL = "https://vibe.boostjuice.com.au/vibe/signup"
 BOOST_SIGNUP_PAGE = "https://vibe.boostjuice.com.au/vibe/signup"
 SIGNUP_SUBMIT_ACTION_ID = "60ede005c6e5709ed86de3269ea823482d535b055f"
 SIGNUP_SUCCESS_ACTION_ID = "4054d26797aa5dc290824d2fecfcb802e03cb5306d"
+BOOST_ORIGIN = "https://vibe.boostjuice.com.au"
 BOOST_PASSWORD = "Abcde1234!"
+
+_SERVER_ACTION_REF_RE = re.compile(
+    r'createServerReference\)\("([a-f0-9]{40,50})"[^"]*"(onSignup(?:Submit|Success)Action)"'
+)
+_CHUNK_PATH_RE = re.compile(r"/_next/static/chunks/[^\"']+\.js")
 
 FIRST_NAMES = [
     "Liam", "Noah", "Oliver", "Jack", "Henry", "Charlie", "William", "Thomas",
@@ -130,6 +136,50 @@ def is_valid_session_token(value):
     return len(value) > 40
 
 
+def signup_action_ids_stale(response):
+    if response is None:
+        return False
+    if response.status_code == 404:
+        return True
+    body = (response.text or "").lower()
+    return "server action not found" in body
+
+
+def refresh_signup_action_ids(session=None):
+    """Load current Next-Action IDs from Boost signup JS bundles."""
+    global SIGNUP_SUBMIT_ACTION_ID, SIGNUP_SUCCESS_ACTION_ID
+
+    http = session or requests.Session()
+    page = http.get(BOOST_SIGNUP_PAGE, headers=BROWSER_HEADERS, timeout=30)
+    if page.status_code != 200:
+        return False
+
+    submit_id = None
+    success_id = None
+    for path in dict.fromkeys(_CHUNK_PATH_RE.findall(page.text)):
+        chunk_url = f"{BOOST_ORIGIN}{path}".replace("&amp;", "")
+        try:
+            chunk = http.get(chunk_url, headers=BROWSER_HEADERS, timeout=20)
+        except requests.RequestException:
+            continue
+        if chunk.status_code != 200:
+            continue
+        for action_hash, action_name in _SERVER_ACTION_REF_RE.findall(chunk.text):
+            if action_name == "onSignupSubmitAction":
+                submit_id = action_hash
+            elif action_name == "onSignupSuccessAction":
+                success_id = action_hash
+        if submit_id and success_id:
+            break
+
+    if not submit_id or not success_id:
+        return False
+
+    SIGNUP_SUBMIT_ACTION_ID = submit_id
+    SIGNUP_SUCCESS_ACTION_ID = success_id
+    return True
+
+
 def create_boost_session():
     device_id = str(uuid.uuid4())
     session = requests.Session()
@@ -228,8 +278,21 @@ def get_session_token(session):
     return token if is_valid_session_token(token) else None
 
 
+def _retry_signup_step_if_stale(session, response, retry_fn):
+    if signup_action_ids_stale(response) and refresh_signup_action_ids(session):
+        return retry_fn()
+    return response
+
+
 def run_boost_signup(session, email, boost_password, name, mobile, dob):
     response1 = boost_signup_step1(session, email, boost_password, name, mobile, dob)
+    response1 = _retry_signup_step_if_stale(
+        session,
+        response1,
+        lambda: boost_signup_step1(
+            session, email, boost_password, name, mobile, dob
+        ),
+    )
 
     if response1.status_code != 200:
         detail = (response1.text or "").strip()[:120]
@@ -245,6 +308,11 @@ def run_boost_signup(session, email, boost_password, name, mobile, dob):
         return False, err
 
     response2 = boost_signup_step2(session, session_message)
+    response2 = _retry_signup_step_if_stale(
+        session,
+        response2,
+        lambda: boost_signup_step2(session, session_message),
+    )
     if get_session_token(session):
         return True, name
 
@@ -277,6 +345,10 @@ def complete_boost_signup(email, boost_password=BOOST_PASSWORD, max_attempts=15)
 
         if "already been registered" in str(detail).lower():
             return {"ok": True, "name": None, "mobile": None, "already_registered": True}
+
+        detail_lower = str(detail).lower()
+        if "server action not found" in detail_lower or "http 404" in detail_lower:
+            refresh_signup_action_ids()
 
         if attempt == max_attempts:
             return {"ok": False, "error": detail}
